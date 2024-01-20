@@ -1,0 +1,327 @@
+local version = 1.0
+
+-----------------------------------------------SETUP-----------------------------------------------
+
+if GHManager then
+    if GHManager.Version >= version then
+        return
+    else
+        print("Older version of Glowing Hourglass Manager detected")
+        print("Removing Glowing Hourglass Manager v" .. GHManager.Version)
+        GHManager.Utilities.RemoveAllCallbacks()
+    end
+end
+
+
+print("Initializing Glowing Hourglass Manager v" .. version)
+
+GHManager = {
+    Mod = RegisterMod("GlowingHourglassManager", 1),
+    Version = version,
+    Utilities = {},
+    Callbacks = {}
+}
+
+local addedModCallbacks = {}
+
+function GHManager.Mod:AddCallback(modCallback, callbackFunction, callbackArguments)
+    Isaac.AddCallback(GHManager.Mod, modCallback, callbackFunction, callbackArguments)
+    table.insert(addedModCallbacks, {
+        Callback = modCallback,
+        Function = callbackFunction,
+    })
+end
+
+function GHManager.Mod:AddPriorityCallback(modCallback, callbackPriority, callbackFunction, callbackArguments)
+    Isaac.AddPriorityCallback(GHManager.Mod, modCallback, callbackPriority, callbackFunction, callbackArguments)
+    table.insert(addedModCallbacks, {
+        Callback = modCallback,
+        Function = callbackFunction,
+    })
+end
+
+function GHManager.Utilities:RemoveAllCallbacks()
+    for _, callbackData in pairs(addedModCallbacks) do
+        Isaac.RemoveCallback(GHManager.Mod, callbackData.Callback, callbackData.Function)
+    end
+end
+
+-----------------------------------------------ENUMS-----------------------------------------------
+
+GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE = {}
+
+GHManager.HourglassUpdate = {
+    Rewind_Previous_Room = 1,
+    New_State = 2,
+    Rewind_Current_Room = 3,
+    New_Session = 4,
+    Continued_Session = 5,
+    New_Stage = 6,
+    New_Absolute_Stage = 7,
+    Previous_Stage_Last_Room = 8,
+    Previous_Stage_Penultimate_Room = 9,
+    Failed_Stage_Return = 10,
+    Save_Pre_Room_Clear_State = 11,
+    Save_Pre_Curse_Damage_Health = 12
+}
+
+GHManager.HourglassStateType = {
+    State_Null = 0,
+    Transition_To_Cleared_Room = 1,
+    Transition_To_Uncleared_Room = 2,
+    Cleared_Room = 3,
+    Forget_Me_Now = 4,
+    Session_Start = 5
+}
+
+---------------------------------------------VARIABLES---------------------------------------------
+
+local game = Game()
+
+local hasCursedDoorDamageBeenTaken = false
+local wasNewStage = false
+local wasPreviousFloorStateNull = false
+
+local glowingHourglassTransactions = {}
+local previousStageHourglassGameState = {
+    Time = 0,
+    Type = GHManager.HourglassStateType.State_Null
+}
+
+local defaultRewindStateType = GHManager.HourglassStateType.Session_Start
+
+---------------------------------------------SAVE DATA---------------------------------------------
+
+-- This section should be customized to fit the needs of your specific mod,
+-- alongside the MC_PRE_GAME_EXIT callback function
+-- Save Data is only need if your mod doesn't use REPENTOGON or if you wish to have
+-- compatibility with vanilla
+
+local function SaveGHManagerData()
+    GHManager:SaveData(previousStageHourglassGameState.Type)
+end
+
+local function LoadGHManagerData(IsContinued)
+    if IsContinued and GHManager:HasData() then
+        previousStageHourglassGameState.Type = tonumber(GHManager:LoadData()) or defaultRewindStateType
+    else
+        previousStageHourglassGameState.Type = defaultRewindStateType
+    end
+end
+
+---------------------------------------------UTILITIES---------------------------------------------
+
+if REPENTOGON then
+    GHManager.Utilities.CanStartTrueCoop = function()
+        return Isaac.CanStartTrueCoop()
+    end
+else
+    GHManager.Utilities.CanStartTrueCoop = function()
+        return previousStageHourglassGameState.Type == GHManager.HourglassStateType.State_Null
+    end
+end
+
+GHManager.Utilities.CanRewindToHome = function()
+    return GHManager.Utilities.CanStartTrueCoop() and game:GetLevel():GetStage() == LevelStage.STAGE1_1
+    -- The game only cares that LevelStage is 1, and that the CanStartTrueCoop flag is true, so even if you
+    -- obtain a Forget Me Now in the first stage or go to Downpour/Dross I and, somehow keep the
+    -- CanStartTrueCoop flag set to true, you will be taken to Home when you use Glowing Hourglass
+    -- (R key also resets the CanStartTrueCoop flag to true)
+end
+
+---------------------------------------------------------------------------------------------------
+-----------------------------------------------MAIN------------------------------------------------
+---------------------------------------------------------------------------------------------------
+
+local function HandleGlowingHourglassTransactions()
+    local level = game:GetLevel()
+    local shouldOverwriteHealthState = not (hasCursedDoorDamageBeenTaken and (game:GetRoom():GetType() == RoomType.ROOM_CURSE or level:GetRoomByIdx(level:GetPreviousRoomIndex()).Data.Type == RoomType.ROOM_CURSE))
+    local updateType = nil
+    hasCursedDoorDamageBeenTaken = false
+    local isNewStage = not (game:GetLevel():GetStateFlag(LevelStateFlag.STATE_LEVEL_START_TRIGGERED))
+    local transactionCount = #glowingHourglassTransactions
+
+    ------------------------------------HANDLE NEW SESSIONS------------------------------------
+
+    -- MC_POST_GAME_STARTED is not needed for New Sessions since we can figure out if the run IsContinued by checking if
+    -- transactionCount <= 0 and isNewStage for a New Run and transactionCount <= 0 and not isNewStage for Continued Runs
+    if transactionCount <= 0 then
+        if isNewStage then
+            table.insert(glowingHourglassTransactions, game.TimeCounter)
+            previousStageHourglassGameState = {
+                Time = game.TimeCounter,
+                Type = GHManager.HourglassStateType.State_Null
+            }
+            updateType = GHManager.HourglassUpdate.New_Session
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType)
+            wasNewStage = false
+        else
+            if not REPENTOGON then
+                LoadGHManagerData(true)
+            end
+            if GHManager.Utilities.CanStartTrueCoop() then
+                table.insert(glowingHourglassTransactions, game.TimeCounter)
+                previousStageHourglassGameState = {
+                    Time = game.TimeCounter,
+                    Type = GHManager.HourglassStateType.State_Null
+                }
+                updateType = GHManager.HourglassUpdate.New_Session
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType)
+                wasNewStage = false
+            else
+                table.insert(glowingHourglassTransactions, game.TimeCounter)
+                previousStageHourglassGameState = {
+                    Time = game.TimeCounter,
+                    Type = GHManager.HourglassStateType.Session_Start
+                }
+                updateType = GHManager.HourglassUpdate.Continued_Session
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType)
+                wasNewStage = false
+            end
+        end
+        return
+    end
+
+    ----------------------------------HANDLE ROOM TRANSITIONS----------------------------------
+
+    if game.TimeCounter > glowingHourglassTransactions[transactionCount] then
+        if isNewStage then
+            if previousStageHourglassGameState.Type == GHManager.HourglassStateType.State_Null then
+                glowingHourglassTransactions = {game.TimeCounter}
+                transactionCount = 1
+                updateType = GHManager.HourglassUpdate.New_Absolute_Stage
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount, updateType)
+                wasNewStage = true
+            else
+                table.insert(glowingHourglassTransactions, game.TimeCounter)
+                updateType = GHManager.HourglassUpdate.New_Stage
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType)
+                wasNewStage = true
+            end
+        else
+            wasPreviousFloorStateNull = previousStageHourglassGameState.Type == GHManager.HourglassStateType.State_Null
+            if transactionCount >= 2 then
+                glowingHourglassTransactions = {glowingHourglassTransactions[transactionCount]}
+                transactionCount = 1
+            end
+            table.insert(glowingHourglassTransactions, game.TimeCounter)
+
+            if not game:GetRoom():IsClear() or game:GetRoom():IsFirstVisit() then
+                previousStageHourglassGameState = {
+                    Time = game.TimeCounter,
+                    Type = GHManager.HourglassStateType.Transition_To_Uncleared_Room
+                }
+                -- If you go to an uncleared room right before leaving, the state is saved
+                -- and in the case that you revert to the previous Floor you will end up
+                -- in the uncleared room when returning
+            else
+                previousStageHourglassGameState = {
+                    Time = game.TimeCounter,
+                    Type = GHManager.HourglassStateType.Transition_To_Cleared_Room
+                }
+                -- If you go trough a cleared right before leaving, the state is saved to
+                -- the moment you made the Room Transition but if you return to the previous
+                -- floor you will be sent to the previous room relative to when you left
+                -- this is regardless of if the previous room is Cleared or Not, so for
+                -- example: you created a Trap Door in the starting room -> you go fight
+                -- the Boss, but instead of killing it you escape using the Fool -> you
+                -- exit the Stage. if you use Glowing Hourglass right after, you will
+                -- be taken to the Boss Fight of the previous floor.
+            end
+            updateType = GHManager.HourglassUpdate.New_State
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType, shouldOverwriteHealthState)
+            wasNewStage = false
+        end
+        return
+    end
+
+    --------------------------------------HANDLE REWINDS---------------------------------------
+
+    if wasNewStage then
+        if previousStageHourglassGameState.Type == GHManager.HourglassStateType.State_Null then
+            updateType = GHManager.HourglassUpdate.Failed_Stage_Return
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, 1, updateType)
+        elseif previousStageHourglassGameState.Type == GHManager.HourglassStateType.Transition_To_Cleared_Room then
+            glowingHourglassTransactions = {previousStageHourglassGameState.Time}
+            updateType = GHManager.HourglassUpdate.Previous_Stage_Penultimate_Room
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, 1, updateType)
+        else
+            glowingHourglassTransactions = {previousStageHourglassGameState.Time}
+            updateType = GHManager.HourglassUpdate.Previous_Stage_Last_Room
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, 1, updateType)
+        end
+        wasNewStage = false
+        return
+    end
+    -- In the unlikely situation that you can go trough multiple floors without ever leaving their
+    -- respective starting room you will be transported back to the last "previous Floor State"
+    -- even if it was at Basement 1 and you are currently at Sheol
+
+    wasNewStage = false
+    if wasPreviousFloorStateNull then
+        previousStageHourglassGameState.Type = GHManager.HourglassStateType.State_Null
+    end
+
+    if transactionCount == 1 then
+        updateType = GHManager.HourglassUpdate.Rewind_Current_Room
+        Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount, updateType)
+        return
+    end
+
+    glowingHourglassTransactions = {game.TimeCounter}
+    updateType = GHManager.HourglassUpdate.Rewind_Previous_Room
+    Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount, updateType, nil, wasPreviousFloorStateNull)
+end
+
+local function HandleGlowingHourglassPreClearState()
+    previousStageHourglassGameState = {
+        Time = game.TimeCounter,
+        Type = GHManager.HourglassStateType.Cleared_Room
+    }
+    local transactionCount = #glowingHourglassTransactions
+    Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, GHManager.HourglassUpdate.Save_Pre_Room_Clear_State, transactionCount)
+end
+
+local function HandleGlowingHourglassPlayerHealthState(_, _, _, DamageFlags)
+    if DamageFlags & DamageFlag.DAMAGE_CURSED_DOOR ~= 0 and not hasCursedDoorDamageBeenTaken then
+        local transactionCount = #glowingHourglassTransactions
+        hasCursedDoorDamageBeenTaken = true
+        Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, GHManager.HourglassUpdate.Save_Pre_Curse_Damage_Health, transactionCount)
+    end
+end
+
+local function ResetPreviousFloorStateToNull()
+    previousStageHourglassGameState = {
+        Time = game.TimeCounter,
+        Type = GHManager.HourglassStateType.State_Null
+    }
+end
+
+local function SetPreviousFloorStateToForget()
+    if previousStageHourglassGameState.Type == GHManager.HourglassStateType.State_Null then
+        return
+    end
+    previousStageHourglassGameState.Type = GHManager.HourglassStateType.Forget_Me_Now
+    -- The game doesn't save the state when using forget me now, but instead it causes
+    -- the previous floor rewind to become of Last_Room type, even when it would otherwise
+    -- be of Penultimate_Room type, Unless it the Stage Return Fails.
+end
+
+local function ResetHourglassStateOnExit()
+    hasCursedDoorDamageBeenTaken = false
+    wasNewStage = false
+    glowingHourglassTransactions = {}
+    SaveGHManagerData()
+end
+
+GHManager.Mod:AddPriorityCallback(ModCallbacks.MC_POST_NEW_ROOM, CallbackPriority.IMPORTANT, HandleGlowingHourglassTransactions)
+
+GHManager.Mod:AddPriorityCallback(ModCallbacks.MC_PRE_SPAWN_CLEAN_AWARD, CallbackPriority.IMPORTANT, HandleGlowingHourglassPreClearState)
+
+GHManager.Mod:AddPriorityCallback(ModCallbacks.MC_ENTITY_TAKE_DMG, CallbackPriority.IMPORTANT, HandleGlowingHourglassPlayerHealthState, EntityType.ENTITY_PLAYER)
+
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_USE_ITEM, ResetPreviousFloorStateToNull, CollectibleType.COLLECTIBLE_R_KEY)
+
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_USE_ITEM, SetPreviousFloorStateToForget, CollectibleType.COLLECTIBLE_FORGET_ME_NOW)
+
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, ResetHourglassStateOnExit)
