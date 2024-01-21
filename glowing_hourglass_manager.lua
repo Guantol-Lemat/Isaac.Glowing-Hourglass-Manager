@@ -51,18 +51,19 @@ end
 GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE = {}
 
 GHManager.HourglassUpdate = {
-    Rewind_Previous_Room = 1,
-    New_State = 2,
-    Rewind_Current_Room = 3,
-    New_Session = 4,
-    Continued_Session = 5,
-    New_Stage = 6,
-    New_Absolute_Stage = 7,
-    Previous_Stage_Last_Room = 8,
-    Previous_Stage_Penultimate_Room = 9,
-    Failed_Stage_Return = 10,
-    Save_Pre_Room_Clear_State = 11,
-    Save_Pre_Curse_Damage_Health = 12
+    New_State = 1,
+    New_State_Warped = 2,
+    Rewind_Previous_Room = 3,
+    Rewind_Current_Room = 4,
+    New_Session = 5,
+    Continued_Session = 6,
+    New_Stage = 7,
+    New_Absolute_Stage = 8,
+    Previous_Stage_Last_Room = 9,
+    Previous_Stage_Penultimate_Room = 10,
+    Failed_Stage_Return = 11,
+    Save_Pre_Room_Clear_State = 12,
+    Save_Pre_Curse_Damage_Health = 13
 }
 
 GHManager.HourglassStateType = {
@@ -228,7 +229,14 @@ local function HandleGlowingHourglassTransactions()
                 -- exit the Stage. if you use Glowing Hourglass right after, you will
                 -- be taken to the Boss Fight of the previous floor.
             end
-            updateType = GHManager.HourglassUpdate.New_State
+            if level.LeaveDoor == -1 then
+                updateType = GHManager.HourglassUpdate.New_State_Warped
+            else
+                updateType = GHManager.HourglassUpdate.New_State
+            end
+            -- Technically to detect a Warp you need to check for level.LeaveDoor == -1 and level.EnterDoor ~= -1
+            -- but that extra is needed to account for Stage Transitions, and since we already account for them there
+            -- is no need
             Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType, shouldOverwriteHealthState)
             wasNewStage = false
         end
