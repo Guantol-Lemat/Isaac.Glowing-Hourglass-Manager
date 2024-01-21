@@ -8,7 +8,7 @@ if GHManager then
     else
         print("Older version of Glowing Hourglass Manager detected")
         print("Removing Glowing Hourglass Manager v" .. GHManager.Version)
-        GHManager.Utilities.RemoveAllCallbacks()
+        GHManager.Utilities:RemoveAllCallbacks()
     end
 end
 
@@ -89,8 +89,6 @@ local previousStageHourglassGameState = {
     Type = GHManager.HourglassStateType.State_Null
 }
 
-local defaultRewindStateType = GHManager.HourglassStateType.Session_Start
-
 ---------------------------------------------SAVE DATA---------------------------------------------
 
 -- This section should be customized to fit the needs of your specific mod,
@@ -98,17 +96,40 @@ local defaultRewindStateType = GHManager.HourglassStateType.Session_Start
 -- Save Data is only need if your mod doesn't use REPENTOGON or if you wish to have
 -- compatibility with vanilla
 
-local function SaveGHManagerData()
-    GHManager:SaveData(previousStageHourglassGameState.Type)
+local ModReference = GHManager.Mod -- Replace this with your own Mod Reference
+local json = require("json")
+
+local defaultManagerData = {
+    RewindStateType = GHManager.HourglassStateType.Session_Start
+}
+
+function GHManager:SaveManagerData(SaveDataTable)
+    SaveDataTable.GHManagerData = {}
+    SaveDataTable.GHManagerData.RewindStateType = previousStageHourglassGameState.Type
 end
 
 local function LoadGHManagerData(IsContinued)
-    if IsContinued and GHManager:HasData() then
-        previousStageHourglassGameState.Type = tonumber(GHManager:LoadData()) or defaultRewindStateType
+    local GHManagerData = {}
+    if IsContinued and ModReference:HasData() then
+        local loadedData = json.decode(ModReference:LoadData())
+        GHManagerData = loadedData["GHManagerData"] or defaultManagerData
     else
-        previousStageHourglassGameState.Type = defaultRewindStateType
+        GHManagerData = defaultManagerData
     end
+    previousStageHourglassGameState.Type = GHManagerData.RewindStateType
 end
+
+--[[
+
+local function ExampleSaveDataFunction()
+    local SaveData = DataToSave
+    GHManager:SavaManagerData(SaveData)
+    ModReference:SaveData(json.encode(SaveData))
+end
+
+ModReference:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, ExampleSaveDataFunction)
+
+]]
 
 ---------------------------------------------UTILITIES---------------------------------------------
 
@@ -319,7 +340,6 @@ local function ResetHourglassStateOnExit()
     hasCursedDoorDamageBeenTaken = false
     wasNewStage = false
     glowingHourglassTransactions = {}
-    SaveGHManagerData()
 end
 
 GHManager.Mod:AddPriorityCallback(ModCallbacks.MC_POST_NEW_ROOM, CallbackPriority.IMPORTANT, HandleGlowingHourglassTransactions)
