@@ -1,8 +1,11 @@
-local version = 1.0
+local version = 1.1
 
 -----------------------------------------------SETUP-----------------------------------------------
 
+local OldCallbacks
+
 if GHManager then
+    OldCallbacks = GHManager.Callbacks
     if GHManager.Version >= version then
         return
     else
@@ -19,7 +22,7 @@ GHManager = {
     Mod = RegisterMod("GlowingHourglassManager", 1),
     Version = version,
     Utilities = {},
-    Callbacks = {}
+    Callbacks = OldCallbacks or {}
 }
 
 local addedModCallbacks = {}
@@ -48,7 +51,7 @@ end
 
 -----------------------------------------------ENUMS-----------------------------------------------
 
-GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE = {}
+GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE = GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE or {}
 
 GHManager.HourglassUpdate = {
     New_State = 1,
