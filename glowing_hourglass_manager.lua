@@ -1,4 +1,4 @@
-local version = 1.1
+local version = 2.0
 
 -----------------------------------------------SETUP-----------------------------------------------
 
@@ -51,7 +51,15 @@ end
 
 -----------------------------------------------ENUMS-----------------------------------------------
 
-GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE = GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE or {}
+GHManager.Callbacks.ON_GENERIC_UPDATE = GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE or {}
+
+GHManager.Callbacks.ON_TRANSITION = GHManager.Callbacks.ON_ROOM_TRANSITION or {}
+GHManager.Callbacks.ON_REWIND = GHManager.Callbacks.ON_REWIND or {}
+GHManager.Callbacks.ON_SPECIAL_EVENT = GHManager.Callbacks.ON_SPECIAL_EVENT or {}
+
+GHManager.Callbacks.ON_REWIND_STATE_UPDATE = GHManager.Callbacks.ON_REWIND_STATE_UPDATE or {}
+GHManager.Callbacks.ON_GAME_STATE_OVERWRITE = GHManager.Callbacks.ON_GAME_STATE_OVERWRITE or {}
+GHManager.Callbacks.ON_PHANTOM_REWIND_STATE_UPDATE = GHManager.Callbacks.ON_PHANTOM_REWIND_STATE_UPDATE or {}
 
 GHManager.HourglassUpdate = {
     New_State = 1,
@@ -69,13 +77,59 @@ GHManager.HourglassUpdate = {
     Save_Pre_Curse_Damage_Health = 13
 }
 
-GHManager.HourglassStateType = {
+GHManager.Enums.HourglassUpdate = GHManager.HourglassUpdate
+
+GHManager.Enums.TransitionType = {
+    ROOM = 1,
+    STAGE = 2
+}
+
+GHManager.Enums.RoomTransition = {
+    REGULAR = 1,
+    WARP = 2
+}
+
+GHManager.Enums.StageTransition = {
+    REGULAR = 1,
+    ABSOLUTE = 2
+}
+
+GHManager.Enums.RewindType = {
+    ROOM = 1,
+    STAGE = 2
+}
+
+GHManager.Enums.RoomRewind = {
+    PREVIOUS_ROOM = 1,
+    CURRENT_ROOM = 2,
+    FAILED_STAGE_RETURN = 3
+}
+
+GHManager.Enums.StageRewind = {
+    LAST_ROOM = 1,
+    PENULTIMATE_ROOM = 2
+}
+
+GHManager.Enums.SpecialEvent = {
+    ROOM_CLEAR = 1,
+    CURSE_DAMAGE = 2
+}
+
+GHManager.HourglassStateType = { -- Internal Use Only
     State_Null = 0,
     Transition_To_Cleared_Room = 1,
     Transition_To_Uncleared_Room = 2,
     Cleared_Room = 3,
     Forget_Me_Now = 4,
     Session_Start = 5
+}
+
+GHManager.PhantomRewindState = {
+    Null = 0,
+    New_Stage = 1,
+    Warp = 2,
+    Room_Clear = 3,
+    Curse_Damage = 4
 }
 
 ---------------------------------------------VARIABLES---------------------------------------------
@@ -91,6 +145,7 @@ local previousStageHourglassGameState = {
     Time = 0,
     Type = GHManager.HourglassStateType.State_Null
 }
+local currentPhantomRewindState = GHManager.PhantomRewindState.Null
 
 ---------------------------------------------SAVE DATA---------------------------------------------
 
@@ -158,16 +213,7 @@ end
 -----------------------------------------------MAIN------------------------------------------------
 ---------------------------------------------------------------------------------------------------
 
-local function HandleGlowingHourglassTransactions()
-    local level = game:GetLevel()
-    local shouldOverwriteHealthState = not (hasCursedDoorDamageBeenTaken and (game:GetRoom():GetType() == RoomType.ROOM_CURSE or level:GetRoomByIdx(level:GetPreviousRoomIndex()).Data.Type == RoomType.ROOM_CURSE))
-    local updateType = nil
-    hasCursedDoorDamageBeenTaken = false
-    local isNewStage = not (game:GetLevel():GetStateFlag(LevelStateFlag.STATE_LEVEL_START_TRIGGERED))
-    local transactionCount = #glowingHourglassTransactions
-
-    ------------------------------------HANDLE NEW SESSIONS------------------------------------
-
+local function HandleNewSessions(transactionCount, isNewStage)
     -- MC_POST_GAME_STARTED is not needed for New Sessions since we can figure out if the run IsContinued by checking if
     -- transactionCount <= 0 and isNewStage for a New Run and transactionCount <= 0 and not isNewStage for Continued Runs
     if transactionCount <= 0 then
@@ -177,9 +223,14 @@ local function HandleGlowingHourglassTransactions()
                 Time = game.TimeCounter,
                 Type = GHManager.HourglassStateType.State_Null
             }
-            updateType = GHManager.HourglassUpdate.New_Session
-            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType)
-            wasNewStage = false
+            local copyFromPhantom = false
+            local copyPhantomHealthState = false
+
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.New_Session, transactionCount + 1, GHManager.HourglassUpdate.New_Session, copyPhantomHealthState)
+
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_TRANSITION, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.RoomTransition.REGULAR, copyPhantomHealthState)
+
+            Isaac.RunCallback(GHManager.Callbacks.ON_REWIND_STATE_UPDATE, copyFromPhantom, copyPhantomHealthState)
         else
             if not REPENTOGON then
                 LoadGHManagerData(true)
@@ -190,39 +241,67 @@ local function HandleGlowingHourglassTransactions()
                     Time = game.TimeCounter,
                     Type = GHManager.HourglassStateType.State_Null
                 }
-                updateType = GHManager.HourglassUpdate.New_Session
-                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType)
-                wasNewStage = false
+                local copyFromPhantom = false
+                local copyPhantomHealthState = false
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.New_Session, transactionCount + 1, GHManager.HourglassUpdate.New_Session)
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_TRANSITION, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.RoomTransition.REGULAR, copyPhantomHealthState)
+
+                Isaac.RunCallback(GHManager.Callbacks.ON_REWIND_STATE_UPDATE, copyFromPhantom, copyPhantomHealthState)
             else
                 table.insert(glowingHourglassTransactions, game.TimeCounter)
                 previousStageHourglassGameState = {
                     Time = game.TimeCounter,
                     Type = GHManager.HourglassStateType.Session_Start
                 }
-                updateType = GHManager.HourglassUpdate.Continued_Session
-                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType)
-                wasNewStage = false
+                local copyFromPhantom = false
+                local copyPhantomHealthState = false
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.Continued_Session, transactionCount + 1, GHManager.HourglassUpdate.Continued_Session)
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_TRANSITION, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.RoomTransition.REGULAR, copyPhantomHealthState)
+
+                Isaac.RunCallback(GHManager.Callbacks.ON_REWIND_STATE_UPDATE, copyFromPhantom, copyPhantomHealthState)
             end
         end
-        return
+        currentPhantomRewindState = GHManager.PhantomRewindState.Null
+        wasNewStage = false
+        return true
     end
+    return false
+end
 
-    ----------------------------------HANDLE ROOM TRANSITIONS----------------------------------
-
+local function HandleTransitions(transactionCount, level, isNewStage)
     if game.TimeCounter > glowingHourglassTransactions[transactionCount] then
         if isNewStage then
             if previousStageHourglassGameState.Type == GHManager.HourglassStateType.State_Null then
                 glowingHourglassTransactions = {game.TimeCounter}
                 transactionCount = 1
-                updateType = GHManager.HourglassUpdate.New_Absolute_Stage
-                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount, updateType)
-                wasNewStage = true
+                local copyFromPhantom = false
+                local copyPhantomHealthState = false
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.New_Absolute_Stage, transactionCount, GHManager.HourglassUpdate.New_Absolute_Stage)
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_TRANSITION, GHManager.Enums.TransitionType.STAGE, GHManager.Enums.TransitionType.STAGE, GHManager.Enums.StageTransition.ABSOLUTE, copyPhantomHealthState)
+
+                Isaac.RunCallback(GHManager.Callbacks.ON_REWIND_STATE_UPDATE, copyFromPhantom, copyPhantomHealthState)
             else
                 table.insert(glowingHourglassTransactions, game.TimeCounter)
-                updateType = GHManager.HourglassUpdate.New_Stage
-                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType)
-                wasNewStage = true
+                local copyPhantomHealthState = false
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.New_Stage, transactionCount + 1, GHManager.HourglassUpdate.New_Stage)
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_TRANSITION, GHManager.Enums.TransitionType.STAGE, GHManager.Enums.TransitionType.STAGE, GHManager.Enums.StageTransition.REGULAR, copyPhantomHealthState)
+
+                if currentPhantomRewindState > GHManager.PhantomRewindState.New_Stage then
+                    local copyFromPhantom = true
+                    Isaac.RunCallback(GHManager.Callbacks.ON_REWIND_STATE_UPDATE, copyFromPhantom, copyPhantomHealthState)
+                end
+                Isaac.RunCallback(GHManager.Callbacks.ON_PHANTOM_REWIND_STATE_UPDATE)
             end
+            currentPhantomRewindState = GHManager.PhantomRewindState.New_Stage
+            wasNewStage = true
         else
             wasPreviousFloorStateNull = previousStageHourglassGameState.Type == GHManager.HourglassStateType.State_Null
             if transactionCount >= 2 then
@@ -253,56 +332,115 @@ local function HandleGlowingHourglassTransactions()
                 -- exit the Stage. if you use Glowing Hourglass right after, you will
                 -- be taken to the Boss Fight of the previous floor.
             end
+            local copyPhantomHealthState = not (hasCursedDoorDamageBeenTaken and (game:GetRoom():GetType() == RoomType.ROOM_CURSE or level:GetRoomByIdx(level:GetPreviousRoomIndex()).Data.Type == RoomType.ROOM_CURSE))
             if level.LeaveDoor == -1 then
-                updateType = GHManager.HourglassUpdate.New_State_Warped
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.New_State_Warped, transactionCount + 1, GHManager.HourglassUpdate.New_State_Warped, copyPhantomHealthState)
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_TRANSITION, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.RoomTransition.WARP)
+
+                if currentPhantomRewindState ~= GHManager.PhantomRewindState.Null then
+                    local copyFromPhantom = true
+                    Isaac.RunCallback(GHManager.Callbacks.ON_REWIND_STATE_UPDATE, copyFromPhantom, copyPhantomHealthState)
+                end
+                Isaac.RunCallback(GHManager.Callbacks.ON_PHANTOM_REWIND_STATE_UPDATE)
+
+                currentPhantomRewindState = GHManager.PhantomRewindState.Warp
             else
-                updateType = GHManager.HourglassUpdate.New_State
+                local copyFromPhantom = false
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.New_State, transactionCount + 1, GHManager.HourglassUpdate.New_State, copyPhantomHealthState)
+
+                Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_TRANSITION, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.TransitionType.ROOM, GHManager.Enums.RoomTransition.REGULAR)
+
+                Isaac.RunCallback(GHManager.Callbacks.ON_REWIND_STATE_UPDATE, copyFromPhantom, copyPhantomHealthState)
+
+                currentPhantomRewindState = GHManager.PhantomRewindState.Null
             end
             -- Technically to detect a Warp you need to check for level.LeaveDoor == -1 and level.EnterDoor ~= -1
             -- but that extra is needed to account for Stage Transitions, and since we already account for them there
             -- is no need
-            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount + 1, updateType, shouldOverwriteHealthState)
             wasNewStage = false
         end
-        return
+        return true
     end
+    return false
+end
 
-    --------------------------------------HANDLE REWINDS---------------------------------------
-
+local function HandleRewinds(transactionCount)
     if wasNewStage then
         if previousStageHourglassGameState.Type == GHManager.HourglassStateType.State_Null then
-            updateType = GHManager.HourglassUpdate.Failed_Stage_Return
-            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, 1, updateType)
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.Failed_Stage_Return, 1, GHManager.HourglassUpdate.Failed_Stage_Return)
+
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_REWIND, GHManager.Enums.RewindType.ROOM, GHManager.Enums.RewindType.ROOM, GHManager.Enums.RoomRewind.FAILED_STAGE_RETURN)
+
+            Isaac.RunCallback(GHManager.Callbacks.ON_GAME_STATE_OVERWRITE)
         elseif previousStageHourglassGameState.Type == GHManager.HourglassStateType.Transition_To_Cleared_Room then
             glowingHourglassTransactions = {previousStageHourglassGameState.Time}
-            updateType = GHManager.HourglassUpdate.Previous_Stage_Penultimate_Room
-            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, 1, updateType)
+
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.Previous_Stage_Penultimate_Room, 1, GHManager.HourglassUpdate.Previous_Stage_Penultimate_Room)
+
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_REWIND, GHManager.Enums.RewindType.STAGE, GHManager.Enums.RewindType.STAGE, GHManager.Enums.StageRewind.PENULTIMATE_ROOM)
+
+            Isaac.RunCallback(GHManager.Callbacks.ON_GAME_STATE_OVERWRITE)
         else
             glowingHourglassTransactions = {previousStageHourglassGameState.Time}
-            updateType = GHManager.HourglassUpdate.Previous_Stage_Last_Room
-            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, 1, updateType)
+
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.Previous_Stage_Last_Room, 1, GHManager.HourglassUpdate.Previous_Stage_Last_Room)
+
+            Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_REWIND, GHManager.Enums.RewindType.STAGE, GHManager.Enums.RewindType.STAGE, GHManager.Enums.StageRewind.LAST_ROOM)
+
+            Isaac.RunCallback(GHManager.Callbacks.ON_GAME_STATE_OVERWRITE)
         end
+        currentPhantomRewindState = GHManager.PhantomRewindState.Null
         wasNewStage = false
-        return
+        return true
     end
     -- In the unlikely situation that you can go trough multiple floors without ever leaving their
     -- respective starting room you will be transported back to the last "previous Floor State"
     -- even if it was at Basement 1 and you are currently at Sheol
 
     wasNewStage = false
+    currentPhantomRewindState = GHManager.PhantomRewindState.Null
     if wasPreviousFloorStateNull then
         previousStageHourglassGameState.Type = GHManager.HourglassStateType.State_Null
     end
 
     if transactionCount == 1 then
-        updateType = GHManager.HourglassUpdate.Rewind_Current_Room
-        Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount, updateType)
-        return
+        Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.Rewind_Current_Room, transactionCount, GHManager.HourglassUpdate.Rewind_Current_Room)
+
+        Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_REWIND, GHManager.Enums.RewindType.ROOM, GHManager.Enums.RewindType.ROOM, GHManager.Enums.RoomRewind.CURRENT_ROOM)
+
+        Isaac.RunCallback(GHManager.Callbacks.ON_GAME_STATE_OVERWRITE)
+        return true
     end
 
     glowingHourglassTransactions = {game.TimeCounter}
-    updateType = GHManager.HourglassUpdate.Rewind_Previous_Room
-    Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, updateType, transactionCount, updateType, nil, wasPreviousFloorStateNull)
+    Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.Rewind_Previous_Room, transactionCount, GHManager.HourglassUpdate.Rewind_Previous_Room, nil, wasPreviousFloorStateNull)
+
+    Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_REWIND, GHManager.Enums.RewindType.ROOM, GHManager.Enums.RewindType.ROOM, GHManager.Enums.RoomRewind.PREVIOUS_ROOM)
+
+    Isaac.RunCallback(GHManager.Callbacks.ON_GAME_STATE_OVERWRITE)
+
+    return true
+end
+
+local function HandleGlowingHourglassTransactions()
+    local level = game:GetLevel()
+    hasCursedDoorDamageBeenTaken = false
+    local isNewStage = not (level:GetStateFlag(LevelStateFlag.STATE_LEVEL_START_TRIGGERED))
+    local transactionCount = #glowingHourglassTransactions
+
+    if HandleNewSessions(transactionCount, isNewStage) then
+        return
+    end
+
+    if HandleTransitions(transactionCount, level, isNewStage) then
+        return
+    end
+
+    if HandleRewinds(transactionCount) then
+        return
+    end
 end
 
 local function HandleGlowingHourglassPreClearState()
@@ -311,14 +449,28 @@ local function HandleGlowingHourglassPreClearState()
         Type = GHManager.HourglassStateType.Cleared_Room
     }
     local transactionCount = #glowingHourglassTransactions
-    Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, GHManager.HourglassUpdate.Save_Pre_Room_Clear_State, transactionCount)
+
+    Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.Save_Pre_Room_Clear_State, transactionCount)
+
+    Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_SPECIAL_EVENT, GHManager.Enums.SpecialEvent.ROOM_CLEAR, GHManager.Enums.SpecialEvent.ROOM_CLEAR)
+
+    Isaac.RunCallback(GHManager.Callbacks.ON_PHANTOM_REWIND_STATE_UPDATE)
+
+    currentPhantomRewindState = GHManager.PhantomRewindState.Room_Clear
 end
 
 local function HandleGlowingHourglassPlayerHealthState(_, _, _, DamageFlags)
     if DamageFlags & DamageFlag.DAMAGE_CURSED_DOOR ~= 0 and not hasCursedDoorDamageBeenTaken then
         local transactionCount = #glowingHourglassTransactions
         hasCursedDoorDamageBeenTaken = true
-        Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GLOWING_HOURGLASS_GAME_STATE_UPDATE, GHManager.HourglassUpdate.Save_Pre_Curse_Damage_Health, transactionCount)
+
+        Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_GENERIC_UPDATE, GHManager.HourglassUpdate.Save_Pre_Curse_Damage_Health, transactionCount)
+
+        Isaac.RunCallbackWithParam(GHManager.Callbacks.ON_SPECIAL_EVENT, GHManager.Enums.SpecialEvent.CURSE_DAMAGE, GHManager.Enums.SpecialEvent.CURSE_DAMAGE)
+
+        Isaac.RunCallback(GHManager.Callbacks.ON_PHANTOM_REWIND_STATE_UPDATE)
+
+        currentPhantomRewindState = GHManager.PhantomRewindState.Curse_Damage
     end
 end
 
@@ -327,6 +479,7 @@ local function ResetPreviousFloorStateToNull()
         Time = game.TimeCounter,
         Type = GHManager.HourglassStateType.State_Null
     }
+    currentPhantomRewindState = GHManager.PhantomRewindState.Null
 end
 
 local function SetPreviousFloorStateToForget()
