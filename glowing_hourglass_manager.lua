@@ -344,28 +344,14 @@ end
 -----------------------------------------POST CLEAN AWARD------------------------------------------
 
 local PostClearRoomAwardCallbacks = {
-    ModCallbacks.MC_POST_EFFECT_UPDATE,
-    ModCallbacks.MC_POST_LASER_UPDATE,
-    ModCallbacks.MC_POST_PROJECTILE_UPDATE,
-    ModCallbacks.MC_POST_BOMB_UPDATE,
-    ModCallbacks.MC_POST_KNIFE_UPDATE,
-    ModCallbacks.MC_POST_FAMILIAR_UPDATE,
-    ModCallbacks.MC_POST_PICKUP_UPDATE,
-    ModCallbacks.MC_POST_TEAR_UPDATE,
+    ModCallbacks.MC_INPUT_ACTION,
     ModCallbacks.MC_POST_UPDATE
 }
 
-local PostClearRoomAwardCallbackNames = {
-    "MC_POST_EFFECT_UPDATE",
-    "MC_POST_LASER_UPDATE",
-    "MC_POST_PROJECTILE_UPDATE",
-    "MC_POST_BOMB_UPDATE",
-    "MC_POST_KNIFE_UPDATE",
-    "MC_POST_FAMILIAR_UPDATE",
-    "MC_POST_PICKUP_UPDATE",
-    "MC_POST_TEAR_UPDATE",
-    "MC_POST_UPDATE"
-}
+if REPENTOGON then
+    table.insert(PostClearRoomAwardCallbacks, ModCallbacks.MC_POST_HUD_UPDATE)
+    table.insert(PostClearRoomAwardCallbacks, ModCallbacks.MC_PLAYER_GET_HEALTH_TYPE)
+end
 
 local preClearReward = false
 
@@ -375,9 +361,9 @@ end
 
 local function FirePostCleanAward()
     if preClearReward then
+        preClearReward = false
         GHManager.RunCallback(GHManager.CustomCallbacks.POST_CLEAN_AWARD)
     end
-    preClearReward = false
 end
 
 GHManager.Mod:AddPriorityCallback(ModCallbacks.MC_PRE_SPAWN_CLEAN_AWARD, GHManager.CallbackPriority.AFTER_MAX, SetPreClearAward)
@@ -674,6 +660,53 @@ local function PreEntitySpawn()
     CheckRoomChanged(false)
 end
 GHManager.Mod:AddPriorityCallback(ModCallbacks.MC_PRE_ENTITY_SPAWN, GHManager.CallbackPriority.AFTER_MAX, PreEntitySpawn)
+
+----------------------------------POST_COMPLETED_ROOM_TRANSITION-----------------------------------
+
+local PostCompletedRoomTransitionCallbacks = {}
+
+if REPENTOGON then
+    PostCompletedRoomTransitionCallbacks = {
+        ModCallbacks.MC_POST_PLAYER_NEW_ROOM_TEMP_EFFECTS,
+        ModCallbacks.MC_PRE_GRID_ENTITY_DECORATION_UPDATE,
+        ModCallbacks.MC_POST_GRID_ENTITY_DECORATION_UPDATE,
+        ModCallbacks.MC_PRE_GRID_ENTITY_DOOR_UPDATE,
+        ModCallbacks.MC_POST_GRID_ENTITY_DOOR_UPDATE,
+        ModCallbacks.MC_PRE_GRID_ENTITY_SPIKES_UPDATE,
+        ModCallbacks.MC_POST_GRID_ENTITY_SPIKES_UPDATE,
+        ModCallbacks.MC_INPUT_ACTION,
+        -- FULL UPDATE CYCLE (Without MC_POST_UPDATE THO)
+        ModCallbacks.MC_PLAYER_GET_ACTIVE_MAX_CHARGE,
+        ModCallbacks.MC_PLAYER_GET_ACTIVE_MIN_USABLE_CHARGE,
+        ModCallbacks.MC_POST_WEAPON_FIRE,
+        ModCallbacks.MC_POST_PEFFECT_UPDATE,
+        ModCallbacks.MC_POST_PLAYER_UPDATE,
+        ModCallbacks.MC_POST_EFFECT_UPDATE,
+        ModCallbacks.MC_NPC_PICK_TARGET,
+        ModCallbacks.MC_PRE_NPC_UPDATE,
+        ModCallbacks.MC_NPC_UPDATE,
+        -- FULL RENDER Cycle (Executed Multiple Times)
+        ModCallbacks.MC_PRE_RENDER_ENTITY_LIGHTING,
+        ModCallbacks.MC_PRE_RENDER_GRID_LIGHTING,
+        ModCallbacks.MC_PRE_BACKDROP_RENDER_FLOOR,
+        ModCallbacks.MC_PRE_GRID_ENTITY_DECORATION_RENDER,
+        ModCallbacks.MC_POST_GRID_ENTITY_DECORATION_RENDER,
+        ModCallbacks.MC_PRE_GRID_ENTITY_DOOR_RENDER,
+        -- Render Grid
+        -- Render NPCs
+        -- Render Effects
+        -- HUD Update
+        ModCallbacks.MC_PRE_RENDER,
+        ModCallbacks.MC_POST_RENDER,
+        ModCallbacks.MC_HUD_RENDER,
+        -- Render Specific parts of the Hud
+        ModCallbacks.MC_POST_HUD_RENDER,
+        -- Some MC_INPUT_ACTION (Could probably be used for a POST_HUD_RENDER callback in vanilla)
+
+        -- FULL UPDATE CYCLE (WITH POST_UPDATE)
+        ModCallbacks.MC_POST_UPDATE
+    }
+end
 
 ---------------------------------------------VARIABLES---------------------------------------------
 
@@ -1050,9 +1083,12 @@ end
 
 local postRoom = false
 
-GHManager.Mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() postRoom = true log.file("Room") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end)
-GHManager.Mod:AddCallback(GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY, function() log.file("Early") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end)
-GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_ROOM_EXIT, function() log.file("Exit") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() log.file("Room") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end)
+GHManager.Mod:AddCallback(GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY, function() log.file("Early") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_ROOM_EXIT, function() log.file("Exit") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end)
+
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_SPAWN_CLEAN_AWARD, function() postRoom = true end)
+GHManager.Mod:AddCallback(13, function() if postRoom then log.print("1024") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end end)
 
 GHManager.AddPriorityCallback(GHManager.Mod, GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY, GHManager.CallbackPriority.AFTER_MAX, HandleGlowingHourglassTransactions)
 table.insert(addedModCallbacks, {
@@ -1083,12 +1119,10 @@ table.insert(addedModCallbacks, {
 
 -- Of course that is only what probably happens on a regular transition.
 -- On rewind something weird happens; aside from the fact that MC_PRE_ROOM_EXIT doesn't trigger, the Rewind State gets set to a State that comes after
--- MC_POST_NEW_ROOM, specifically the moment right after MC_POST_NEW_ROOM (After MC_EVALUATE_CACHE, Before MC_INPUT_ACTION)
+-- MC_POST_NEW_ROOM, specifically the moment right after MC_POST_NEW_ROOM (After MC_EVALUATE_CACHE, Before MC_POST_PLAYER_NEW_ROOM_TEMP_EFFECTS (Repentogon), Before MC_INPUT_ACTION (Vanilla))
 
-GHManager.Mod:AddCallback(ModCallbacks.MC_INPUT_ACTION, function() if postRoom then log.print("Input") game:GetPlayer(0):AddCoins(1) end end)
-for index, callbackId in ipairs(PostClearRoomAwardCallbacks) do
-    if callbackId == 1 then print("POST_UPDATE_REGISTERED") end
-    GHManager.Mod:AddCallback(callbackId, function()  if postRoom then log.file("End") end postRoom = false end)
+for index, callbackId in pairs(ModCallbacks) do
+    GHManager.Mod:AddCallback(callbackId, function()  if postRoom then log.file("callbackId: " .. callbackId) end end)
 end
 GHManager.Mod:AddCallback(ModCallbacks.MC_POST_UPDATE, function()  if postRoom then log.file("End") end postRoom = false end)
 
