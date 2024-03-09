@@ -1,23 +1,5 @@
-local version = 2.1
-
------------------------------------------------SETUP-----------------------------------------------
-
-local OldCallbacks
-local OldCustomCallbacks
-
-if GHManager then
-    OldCallbacks = GHManager.Callbacks
-    OldCustomCallbacks = GHManager.CustomCallbacks
-    if GHManager.Version >= version then
-        return
-    else
-        Isaac.DebugString("Older version of Glowing Hourglass Manager detected")
-        Isaac.DebugString("Removing Glowing Hourglass Manager v" .. GHManager.Version)
-        GHManager.Utilities:RemoveAllCallbacks()
-    end
-end
-
-Isaac.DebugString("Initializing Glowing Hourglass Manager v" .. version)
+local MajorVersion = 0
+local Version = 2.1
 
 local log = {}
 
@@ -30,18 +12,59 @@ function log.file(Message)
     Isaac.DebugString(Message)
 end
 
+-----------------------------------------------SETUP-----------------------------------------------
+
+local OldCallbacks
+local OldCustomCallbacks
+
+if GHManager then
+    OldCallbacks = GHManager.Callbacks
+    OldCustomCallbacks = GHManager.CustomCallbacks
+    if not GHManager.MajorVersion then
+        GHManager.MajorVersion = 0
+    end
+    if GHManager.Version >= Version then
+        return
+    else
+        log.file("Older version of Glowing Hourglass Manager detected")
+        log.file("Removing Glowing Hourglass Manager v" .. GHManager.MajorVersion .. "." .. GHManager.Version)
+        GHManager.Utilities:RemoveAllCallbacks()
+    end
+end
+
+log.file("Initializing Glowing Hourglass Manager v" .. MajorVersion .. "." .. Version)
+
 GHManager = {
     Mod = RegisterMod("Glowing Hourglass Manager", 1),
-    Version = version,
+    MajorVersion = MajorVersion,
+    Version = Version,
     Utilities = {},
     Callbacks = OldCallbacks or {},
     CustomCallbacks = OldCustomCallbacks or {}
 }
 
+local function IsCustomCallback(callback)
+    for _, callbackId in pairs(GHManager.Callbacks) do
+        if callbackId == callback then
+            return true
+        end
+    end
+    for _, callbackId in pairs(GHManager.CustomCallbacks) do
+        if callbackId == callback then
+            return true
+        end
+    end
+    return false
+end
+
 local addedModCallbacks = {}
 
 function GHManager.Mod:AddCallback(modCallback, callbackFunction, callbackArguments)
-    Isaac.AddCallback(GHManager.Mod, modCallback, callbackFunction, callbackArguments)
+    if IsCustomCallback(modCallback) then
+        GHManager.AddCallback(GHManager.Mod, modCallback, callbackFunction, callbackArguments)
+    else
+        Isaac.AddCallback(GHManager.Mod, modCallback, callbackFunction, callbackArguments)
+    end
     table.insert(addedModCallbacks, {
         Callback = modCallback,
         Function = callbackFunction,
@@ -49,7 +72,11 @@ function GHManager.Mod:AddCallback(modCallback, callbackFunction, callbackArgume
 end
 
 function GHManager.Mod:AddPriorityCallback(modCallback, callbackPriority, callbackFunction, callbackArguments)
-    Isaac.AddPriorityCallback(GHManager.Mod, modCallback, callbackPriority, callbackFunction, callbackArguments)
+    if IsCustomCallback(modCallback) then
+        GHManager.AddPriorityCallback(GHManager.Mod, modCallback, callbackPriority, callbackFunction, callbackArguments)
+    else
+        Isaac.AddPriorityCallback(GHManager.Mod, modCallback, callbackPriority, callbackFunction, callbackArguments)
+    end
     table.insert(addedModCallbacks, {
         Callback = modCallback,
         Function = callbackFunction,
@@ -81,6 +108,7 @@ GHManager.Callbacks.ON_PHANTOM_REWIND_STATE_UPDATE = GHManager.Callbacks.ON_PHAN
 
 GHManager.CustomCallbacks.POST_CLEAN_AWARD = GHManager.CustomCallbacks.POST_CLEAN_AWARD or {}
 GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY = GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY or {}
+GHManager.CustomCallbacks.PRE_NEW_ROOM_UPDATE = GHManager.CustomCallbacks.PRE_NEW_ROOM_UPDATE or {}
 
 GHManager.HourglassUpdate = {
     New_State = 1,
@@ -599,7 +627,7 @@ end
 local currentRoomTopLeftWallPtrHash = nil
 local currentRoomTopLeftWallPtrHash2 = nil
 
-local function IsNewRoom()
+local function IsNewRoom_GridPtr()
     local room = Game():GetRoom()
     local topLeftWallGridIndex = GetTopLeftWallGridIndex()
     local rightOfTopWallGridIndex = topLeftWallGridIndex + 1
@@ -608,7 +636,6 @@ local function IsNewRoom()
     local topLeftWall2 = room:GetGridEntity(rightOfTopWallGridIndex)
 
     if topLeftWall == nil then
-        print("nil top Wall")
         topLeftWall = SpawnGridEntity(GridEntityType.GRID_WALL, 0, topLeftWallGridIndex)
         if topLeftWall == nil then
             log.file("Failed to spawn a new wall (1) for the POST_NEW_ROOM_EARLY callback.")
@@ -617,7 +644,6 @@ local function IsNewRoom()
     end
 
     if topLeftWall2 == nil then
-        print("nil top Wall2")
         topLeftWall2 = SpawnGridEntity(GridEntityType.GRID_WALL, 0, rightOfTopWallGridIndex)
 
         if topLeftWall2 == nil then
@@ -635,6 +661,17 @@ local function IsNewRoom()
         oldTopLeftWallPtrHash2 ~= currentRoomTopLeftWallPtrHash2
 end
 
+local currentRoomSpawnSeed = nil
+
+local function IsNewRoom_Seed()
+    local room = Game():GetRoom()
+    local oldRoomSpawnSeed = currentRoomSpawnSeed
+    currentRoomSpawnSeed = room:GetSpawnSeed()
+    if oldRoomSpawnSeed ~= currentRoomSpawnSeed then
+        return true
+    end
+    return false
+end
 
 local function CheckRoomChanged(isFromNewRoomCallback)
     local level = Game():GetLevel()
@@ -646,7 +683,7 @@ local function CheckRoomChanged(isFromNewRoomCallback)
         return
     end
 
-    if IsNewRoom() then
+    if IsNewRoom_GridPtr() then
         GHManager.RunCallback(GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY, isFromNewRoomCallback)
     end
 end
@@ -660,6 +697,36 @@ local function PreEntitySpawn()
     CheckRoomChanged(false)
 end
 GHManager.Mod:AddPriorityCallback(ModCallbacks.MC_PRE_ENTITY_SPAWN, GHManager.CallbackPriority.AFTER_MAX, PreEntitySpawn)
+GHManager.Mod:AddPriorityCallback(ModCallbacks.MC_PRE_ROOM_ENTITY_SPAWN, GHManager.CallbackPriority.AFTER_MAX, PreEntitySpawn)
+
+----------------------------------------PRE_NEW_ROOM_UPDATE----------------------------------------
+
+-- After MC_PRE_ROOM_ENTITY_SPAWN (Vanilla), After MC_POST_BACKDROP_PRE_RENDER_WALLS (Repentogon), Before MC_PRE_NPC_UPDATE (Vanilla) or MC_POST_NEW_ROOM
+-- Creates a Phantom Rewind State that becomes the Rewind state if a Warp is made, or a stage transition occurs (unless other phantom rewind states were created)
+
+local PreNewRoomUpdateCallbacks = {
+    ModCallbacks.MC_PRE_NPC_UPDATE,
+    ModCallbacks.MC_POST_NEW_ROOM
+}
+
+local postNewRoomEarly = false
+
+local function SetPostNewRoomEarly()
+    postNewRoomEarly = true
+end
+
+local function FirePreNewRoomUpdate()
+    if postNewRoomEarly then
+        postNewRoomEarly = false
+        GHManager.RunCallback(GHManager.CustomCallbacks.PRE_NEW_ROOM_UPDATE)
+    end
+end
+
+GHManager.Mod:AddPriorityCallback(GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY, GHManager.CallbackPriority.AFTER_MAX, SetPostNewRoomEarly)
+
+for _, callbackId in pairs(PreNewRoomUpdateCallbacks) do
+    GHManager.Mod:AddPriorityCallback(callbackId, GHManager.CallbackPriority.AFTER_MAX, FirePreNewRoomUpdate)
+end
 
 ----------------------------------POST_COMPLETED_ROOM_TRANSITION-----------------------------------
 
@@ -775,7 +842,7 @@ end
 function GHManager.Utilities.CanRewindToHome()
     return GHManager.Utilities.CanStartTrueCoop() and game:GetLevel():GetStage() == LevelStage.STAGE1_1
     -- The game only cares that LevelStage is 1, and that the CanStartTrueCoop flag is true, so even if you
-    -- obtain a Forget Me Now in the first stage or go to Downpour/Dross I and, somehow keep the
+    -- obtain a Forget Me Now in the first stage or go to Downpour/Dross I and somehow keep the
     -- CanStartTrueCoop flag set to true, you will be taken to Home when you use Glowing Hourglass
     -- (R key also resets the CanStartTrueCoop flag to true)
 end
@@ -933,7 +1000,7 @@ local function HandleTransitions(transactionCount, level, isNewStage, shouldOver
             -- but that extra is needed to account for Stage Transitions, and since we already account for them there
             -- is no need
 
-            -- Going inside of a Crawlspace also causes level.LeveDoor to be set to -1, and altough this might seem
+            -- Going inside of a Crawlspace also causes level.LeveDoor to be set to -1, and although this might seem
             -- counter intuitive, the game treats this as a warp and as such the Glowing Hourglass updates the same
             -- exact way it does when accounting for a warp.
             -- Proof: After Clearing a Room give yourself We Need To Go Deeper! and Spawn a Crawlspace then enter the
@@ -1082,13 +1149,22 @@ local function ResetHourglassStateOnExit()
 end
 
 local postRoom = false
+local firstNPCUpdate = false
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_CHANGE_ROOM, function() log.print("Change") end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() log.print("Room") print(Game():GetPlayer(0):GetNumCoins()) if postRoom then Game():GetPlayer(0):AddCoins(1) end end)
+GHManager.Mod:AddCallback(GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY, function() log.print("Early") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_ROOM_EXIT, function() log.print("Exit") postRoom = true firstNPCUpdate = true  print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end)
 
-GHManager.Mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() log.file("Room") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end)
-GHManager.Mod:AddCallback(GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY, function() log.file("Early") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end)
-GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_ROOM_EXIT, function() log.file("Exit") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end)
 
-GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_SPAWN_CLEAN_AWARD, function() postRoom = true end)
-GHManager.Mod:AddCallback(13, function() if postRoom then log.print("1024") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_NPC_UPDATE, function() if firstNPCUpdate then firstNPCUpdate = false log.print("NPC_UPDATE") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_POST_BACKDROP_PRE_RENDER_WALLS, function() if firstNPCUpdate then log.print("BACKDROP_RENDER") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_REPLACE_SPRITESHEET, function() if firstNPCUpdate then firstNPCUpdate = false log.print("SPRITESHEET") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end end)
+-- GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_ROOM_ENTITY_SPAWN, function() if firstNPCUpdate then firstNPCUpdate = false log.print("ROOM_SPAWN") Game():GetPlayer(0):AddCoins(1) end end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_PRE_ENTITY_SPAWN, function() if firstNPCUpdate then log.print("ENTITY_SPAWN") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(0) end end)
+
+GHManager.Mod:AddCallback(GHManager.Callbacks.ON_TRANSITION, function() log.print("Room Transition") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end, GHManager.Enums.TransitionType.ROOM)
+
+-- GHManager.Mod:AddCallback(13, function() if postRoom then log.print("1024") print(Game():GetPlayer(0):GetNumCoins()) Game():GetPlayer(0):AddCoins(1) end end)
 
 GHManager.AddPriorityCallback(GHManager.Mod, GHManager.CustomCallbacks.POST_NEW_ROOM_EARLY, GHManager.CallbackPriority.AFTER_MAX, HandleGlowingHourglassTransactions)
 table.insert(addedModCallbacks, {
@@ -1102,17 +1178,15 @@ table.insert(addedModCallbacks, {
 -- function CreatePhantomRewindState()
 --     SaveGameState
 -- end
--- function UpdateRewindState()
---     CopyPhantomRewindState
---     CreatePhantomRewindState()
+-- function CreateRewindState()
+--    SaveGameState()
 -- end
 
--- The game then executes an UpdateRewindState() every MC_PRE_ROOM_EXIT but only if the NewLevel parameter is set to false otherwise it does nothing
--- Then on MC_POST_NEW_ROOM the game checks for Level:LeaveDoor if it is == -1 then it executes CreatePhantomRewindState(), otherwise it executes UpdateRewindState()
--- Add to that the special POST_CLEAN_AWARD and MC_ENTITY_TAKE_DMG special events that both execute CreatePhantomRewindState()
+
+-- Every MC_PRE_ROOM_EXIT the game Creates a Rewind State using the current game state and then right before it begins the first Update Cycle inside the new Room it Creates a Phantom Rewind State
 
 -- This implementation seems both completely accurate to what happens in-game, and way less complicated than the mess I first assumed.
--- Coupled with that the fact that in three very special circumstances the MC_PRE_ROOM_EXIT callback behaves "strangely":
+-- Coupled that with the fact that in three very special circumstances the MC_PRE_ROOM_EXIT callback behaves "strangely":
 -- On a New Session MC_PRE_ROOM_EXIT is executed after MC_POST_NEW_ROOM
 -- On Rewind MC_PRE_ROOM_EXIT does not get called at all
 -- On Multiplayer MC_PRE_ROOM_EXIT is called once for each player (Maybe it's hooked at the time where Each Player's Health State has to be overwritten?)
@@ -1121,10 +1195,16 @@ table.insert(addedModCallbacks, {
 -- On rewind something weird happens; aside from the fact that MC_PRE_ROOM_EXIT doesn't trigger, the Rewind State gets set to a State that comes after
 -- MC_POST_NEW_ROOM, specifically the moment right after MC_POST_NEW_ROOM (After MC_EVALUATE_CACHE, Before MC_POST_PLAYER_NEW_ROOM_TEMP_EFFECTS (Repentogon), Before MC_INPUT_ACTION (Vanilla))
 
+local function PrintMessage()
+    log.print("Pre_New_Room_Update")
+end
+
+GHManager.Mod:AddPriorityCallback(GHManager.CustomCallbacks.PRE_NEW_ROOM_UPDATE, GHManager.CallbackPriority.AFTER_MAX, PrintMessage)
+
 for index, callbackId in pairs(ModCallbacks) do
     GHManager.Mod:AddCallback(callbackId, function()  if postRoom then log.file("callbackId: " .. callbackId) end end)
 end
-GHManager.Mod:AddCallback(ModCallbacks.MC_POST_UPDATE, function()  if postRoom then log.file("End") end postRoom = false end)
+GHManager.Mod:AddCallback(ModCallbacks.MC_POST_UPDATE, function()  if postRoom then log.file("End") end postRoom = false firstNPCUpdate = false end)
 
 GHManager.AddPriorityCallback(GHManager.Mod, GHManager.CustomCallbacks.POST_CLEAN_AWARD, GHManager.CallbackPriority.AFTER_MAX, HandleGlowingHourglassPostClearState)
 table.insert(addedModCallbacks, {
